@@ -1,21 +1,25 @@
 from flask import Flask, request, jsonify
+from utils import *
+import pandas as pd
 
 app = Flask(__name__)
 
 
-@app.route("/process", methods=["POST","GET"])
-def process():
+@app.route("/analyze", methods=["POST"])
+def analyze():
     payload = request.get_json()
+    df = pd.DataFrame(payload["orders"])
 
-    # Example: CPI sends one split entry
-    entry_id = payload.get("id")
+    df = run_numeric_analysis(df)
+    df = run_frequency_analysis(df)
+    df = run_text_analysis(df)
 
-    response = {
-        "id": entry_id,
-        "processed": True
-    }
+    recommendations = generate_recommendations(df)
 
-    return jsonify(response), 200
+    return jsonify({
+        "task_list_id": payload["task_list_id"],
+        "recommendations": recommendations
+    })
 
 
 if __name__ == "__main__":
