@@ -3,12 +3,21 @@ import numpy as np
 
 
 def build_data_model(payload):
-    task_df = pd.DataFrame(payload["TaskListOperations"])
-    mo_df = pd.DataFrame(payload["MaintenanceOrderOperations"])
+    task_df = pd.DataFrame(payload['results'][1]['value'])
+    mo_df = pd.DataFrame(payload['results'][0]['d']['results'])
 
     # Ensure correct dtypes
-    task_df["OperationKey"] = task_df["OperationKey"].astype(int)
-    mo_df["OperationKey"] = mo_df["OperationKey"].astype(int)
+    task_df["TaskListOperationInternalId"] = task_df["TaskListOperationInternalId"].astype(int)
+    mo_df["TaskListOperationInternalId"] = mo_df["TaskListOperationInternalId"].astype(int)
+
+    task_df = task_df[['WorkCenter', 'Plant', 'OpPlannedWorkQuantity', 'OpWorkQuantityUnit', 'TaskListOperationInternalId']]
+    mo_df = mo_df[[ 'MaintenanceOrder', 'MaintenanceOrderOperation', 'WorkCenter', 'Plant', 'MaintOrderOperationQuantity', 'MaintOrdOperationQuantityUnit', 'TaskListOperationInternalId']]
+
+    task_df.rename(columns={'OpWorkQuantityUnit': 'Unit', 'OpPlannedWorkQuantity': 'Quantity'}, inplace=True)
+    mo_df.rename(columns={'MaintOrderOperationQuantity': 'Quantity', 'MaintOrdOperationQuantityUnit': 'Unit'}, inplace=True)
+
+    task_df["Quantity"] = task_df["Quantity"].astype(float)
+    mo_df["Quantity"] = mo_df["Quantity"].astype(float)
 
     return task_df, mo_df
 
@@ -27,11 +36,11 @@ def analyze_single_order(order_df, task_df):
         "quantity_deltas": []
     }
 
-    task_ops = set(task_df["OperationKey"])
-    order_ops = set(order_df["OperationKey"])
+    task_ops = set(task_df["TaskListOperationInternalId"])
+    order_ops = set(order_df["TaskListOperationInternalId"])
 
     # New operations (OperationKey = 0)
-    new_ops = order_df[order_df["OperationKey"] == 0]
+    new_ops = order_df[order_df["TaskListOperationInternalId"] == 0]
     if not new_ops.empty:
         result["new_operations"] = new_ops.to_dict("records")
 
@@ -42,17 +51,15 @@ def analyze_single_order(order_df, task_df):
     # Quantity deviations
     merged = order_df.merge(
         task_df,
-        on=["OperationKey", "unit"],
+        on=["TaskListOperationInternalId"],
         how="inner",
         suffixes=("_actual", "_planned")
     )
+    merged["delta"] = merged["Quantity_actual"] - merged["Quantity_planned"]
 
-    merged["delta"] = merged["quantity_actual"] - merged["quantity_planned"]
-
-    result["quantity_deltas"] = merged[[
-        "OperationKey", "quantity_planned", "quantity_actual", "delta"
+    result["Quantity_deltas"] = merged[[
+        "TaskListOperationInternalId", "Quantity_planned", "Quantity_actual", "delta"
     ]].to_dict("records")
-
     return result
 
 
@@ -64,8 +71,8 @@ def aggregate_learning(order_results):
     }
 
     for order_id, res in order_results.items():
-        for q in res["quantity_deltas"]:
-            op = q["OperationKey"]
+        for q in res["Quantity_deltas"]:
+            op = q["TaskListOperationInternalId"]
             agg["qty_stats"].setdefault(op, []).append(q["delta"])
 
         for op in res["missing_operations"]:
@@ -86,13 +93,13 @@ def propose_master_changes(task_df, agg, total_orders):
 
         if abs(mean_delta) > 1:  # business threshold
             proposals.append({
-                "OperationKey": op_key,
+                "TaskListOperationInternalId": op_key,
                 "type": "UPDATE_QUANTITY",
                 "current_quantity": float(
-                    task_df.loc[task_df.OperationKey == op_key, "quantity"].iloc[0]
+                    task_df.loc[task_df.TaskListOperationInternalId == op_key, "Quantity"].iloc[0]
                 ),
                 "suggested_quantity": float(
-                    task_df.loc[task_df.OperationKey == op_key, "quantity"].iloc[0]
+                    task_df.loc[task_df.TaskListOperationInternalId == op_key, "Quantity"].iloc[0]
                     + mean_delta
                 ),
                 "confidence": "HIGH"
@@ -101,14 +108,14 @@ def propose_master_changes(task_df, agg, total_orders):
     for op_key, count in agg["missing_ops_count"].items():
         if count / total_orders > 0.6:
             proposals.append({
-                "OperationKey": op_key,
+                "TaskListOperationInternalId": op_key,
                 "type": "DELETE_OPERATION",
                 "confidence": "MEDIUM"
             })
 
     if agg["new_ops_count"].get("NEW_OP", 0) / total_orders > 0.4:
         proposals.append({
-            "OperationKey": 0,
+            "TaskListOperationInternalId": 0,
             "type": "ADD_NEW_OPERATION",
             "confidence": "LOW"
         })

@@ -5,11 +5,7 @@ app = Flask(__name__)
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
-    print(request.data)
-    return jsonify({"Good": [1,2,3,4]})
     payload = request.get_json()
-    print(payload)
-    return jsonify({"Good": [1,2,3,4]})
     task_df, mo_df = build_data_model(payload)
     grouped_orders = group_by_order(mo_df)
 
@@ -25,7 +21,7 @@ def analyze():
         agg,
         total_orders=len(grouped_orders)
     )
-
+    print(proposals)
     return jsonify({
         "order_level_analysis": order_results,
         "master_change_proposals": proposals
