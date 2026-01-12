@@ -1,24 +1,34 @@
 from flask import Flask, request, jsonify
-from utils import *
-import pandas as pd
-
+from setupData import *
 app = Flask(__name__)
 
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
+    print(request.data)
+    return jsonify({"Good": [1,2,3,4]})
     payload = request.get_json()
-    df = pd.DataFrame(payload["orders"])
+    print(payload)
+    return jsonify({"Good": [1,2,3,4]})
+    task_df, mo_df = build_data_model(payload)
+    grouped_orders = group_by_order(mo_df)
 
-    df = run_numeric_analysis(df)
-    df = run_frequency_analysis(df)
-    df = run_text_analysis(df)
+    order_results = {
+        order_id: analyze_single_order(df, task_df)
+        for order_id, df in grouped_orders.items()
+    }
 
-    recommendations = generate_recommendations(df)
+    agg = aggregate_learning(order_results)
+
+    proposals = propose_master_changes(
+        task_df,
+        agg,
+        total_orders=len(grouped_orders)
+    )
 
     return jsonify({
-        "task_list_id": payload["task_list_id"],
-        "recommendations": recommendations
+        "order_level_analysis": order_results,
+        "master_change_proposals": proposals
     })
 
 
